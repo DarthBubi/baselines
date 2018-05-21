@@ -1,4 +1,5 @@
 import numpy as np
+import pickle
 
 
 class RingBuffer(object):
@@ -77,6 +78,14 @@ class Memory(object):
         self.rewards.append(reward)
         self.observations1.append(obs1)
         self.terminals1.append(terminal1)
+
+    def save(self, pathname):
+        pickle.dump([self.observations0, self.actions, self.rewards, self.terminals1, self.observations1],
+                    open(pathname, 'wb'))
+
+    def load(self, pathname):
+        [self.observations0, self.actions, self.rewards, self.terminals1, self.observations1] = pickle.load(
+            open(pathname, 'rb'))
 
     @property
     def nb_entries(self):
