@@ -2,6 +2,7 @@ import argparse
 import time
 import os
 import logging
+import datetime
 from baselines import logger, bench
 from baselines.common.misc_util import (
     set_global_seeds,
@@ -11,12 +12,13 @@ import baselines.ddpg.training as training
 from baselines.ddpg.models import Actor, Critic
 from baselines.ddpg.memory import Memory
 from baselines.ddpg.noise import *
+import learnbb
 
 import gym
 import tensorflow as tf
 from mpi4py import MPI
 
-def run(env_id, seed, noise_type, layer_norm, evaluation, **kwargs):
+def run(env_id, seed, noise_type, layer_norm, evaluation, test, **kwargs):
     # Configure things.
     rank = MPI.COMM_WORLD.Get_rank()
     if rank != 0:
@@ -24,12 +26,14 @@ def run(env_id, seed, noise_type, layer_norm, evaluation, **kwargs):
 
     # Create envs.
     env = gym.make(env_id)
+    if hasattr(env, "goal"):
+        env = gym.wrappers.FlattenDictWrapper(env, dict_keys=['observation', 'desired_goal'])
     env = bench.Monitor(env, logger.get_dir() and os.path.join(logger.get_dir(), str(rank)))
 
-    if evaluation and rank==0:
-        eval_env = gym.make(env_id)
-        eval_env = bench.Monitor(eval_env, os.path.join(logger.get_dir(), 'gym_eval'))
-        env = bench.Monitor(env, None)
+    if evaluation and rank == 0:
+        # eval_env = gym.make(env_id)
+        eval_env = env
+        # eval_env = bench.Monitor(eval_env, os.path.join(logger.get_dir(), 'gym_eval'))
     else:
         eval_env = None
 
@@ -68,15 +72,23 @@ def run(env_id, seed, noise_type, layer_norm, evaluation, **kwargs):
         eval_env.seed(seed)
 
     # Disable logging for rank != 0 to avoid noise.
-    if rank == 0:
-        start_time = time.time()
-    training.train(env=env, eval_env=eval_env, param_noise=param_noise,
-        action_noise=action_noise, actor=actor, critic=critic, memory=memory, **kwargs)
-    env.close()
-    if eval_env is not None:
-        eval_env.close()
-    if rank == 0:
-        logger.info('total runtime: {}s'.format(time.time() - start_time))
+    if test:
+        if rank == 0:
+            start_time = time.time()
+        training.test(env=env, eval_env=eval_env, param_noise=param_noise,
+                      action_noise=action_noise, actor=actor, critic=critic, memory=memory, **kwargs)
+        if rank == 0:
+            logger.info('total runtime: {}s'.format(time.time() - start_time))
+    else:
+        if rank == 0:
+            start_time = time.time()
+        training.train(env=env, eval_env=eval_env, param_noise=param_noise,
+            action_noise=action_noise, actor=actor, critic=critic, memory=memory, **kwargs)
+        env.close()
+        if eval_env is not None:
+            eval_env.close()
+        if rank == 0:
+            logger.info('total runtime: {}s'.format(time.time() - start_time))
 
 
 def parse_args():
@@ -97,14 +109,17 @@ def parse_args():
     parser.add_argument('--gamma', type=float, default=0.99)
     parser.add_argument('--reward-scale', type=float, default=1.)
     parser.add_argument('--clip-norm', type=float, default=None)
-    parser.add_argument('--nb-epochs', type=int, default=500)  # with default settings, perform 1M steps total
+    parser.add_argument('--nb-epochs', type=int, default=250)  # with default settings, perform 1M steps total
     parser.add_argument('--nb-epoch-cycles', type=int, default=20)
     parser.add_argument('--nb-train-steps', type=int, default=50)  # per epoch cycle and MPI worker
     parser.add_argument('--nb-eval-steps', type=int, default=100)  # per epoch cycle and MPI worker
     parser.add_argument('--nb-rollout-steps', type=int, default=100)  # per epoch cycle and MPI worker
     parser.add_argument('--noise-type', type=str, default='adaptive-param_0.2')  # choices are adaptive-param_xx, ou_xx, normal_xx, none
     parser.add_argument('--num-timesteps', type=int, default=None)
+    # parser.add_argument('--logdir', type=str, default=None)
     boolean_flag(parser, 'evaluation', default=False)
+    boolean_flag(parser, 'test', default=False)
+    # parser.add_argument('--logdir', type=str, default=None)
     args = parser.parse_args()
     # we don't directly specify timesteps for this script, so make sure that if we do specify them
     # they agree with the other parameters
@@ -118,6 +133,8 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     if MPI.COMM_WORLD.Get_rank() == 0:
-        logger.configure()
+        log_dir = "/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/"
+        sess_dir = os.path.join(log_dir, datetime.datetime.now().strftime("openai-%Y-%m-%d-%H-%M-%S-%f"))
+        logger.configure(dir=sess_dir)
     # Run actual script.
     run(**args)
