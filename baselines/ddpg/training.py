@@ -71,6 +71,10 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
         epoch_actions = []
         epoch_qs = []
         epoch_episodes = 0
+
+        epoch_episode_ball_hits = []
+        epoch_episode_target_hits = []
+
         for epoch in range(nb_epochs):
             for cycle in range(nb_epoch_cycles):
                 # Perform rollouts.
@@ -106,6 +110,14 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
                         epoch_episodes += 1
                         episodes += 1
 
+                        epoch_episode_ball_hits.append(int(info['ball_hit']))
+                        epoch_episode_target_hits.append(int(info['target_hit']))
+
+                        if info['ball_hit']:
+                            pass
+                        if info['target_hit']:
+                            pass
+                        
                         agent.reset()
                         obs = env.reset()
 
@@ -199,6 +211,8 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
             combined_stats['rollout/actions_mean'] = mpi_mean(epoch_actions)
             combined_stats['rollout/actions_std'] = mpi_std(epoch_actions)
             combined_stats['rollout/Q_mean'] = mpi_mean(epoch_qs)
+            combined_stats['rollout/ball_hits'] = mpi_mean(epoch_episode_ball_hits)
+            combined_stats['rollout/target_hits'] = mpi_mean(epoch_episode_target_hits)
 
             # Train statistics.
             combined_stats['train/loss_actor'] = mpi_mean(epoch_actor_losses)
