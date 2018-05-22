@@ -13,6 +13,10 @@ import tensorflow as tf
 from mpi4py import MPI
 
 
+def scale_action(action, min_action, max_action):
+    return action * max_action * (action >= 0) + action * abs(min_action) * (action < 0)
+
+
 def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, param_noise, actor, critic,
     normalize_returns, normalize_observations, critic_l2_reg, actor_lr, critic_lr, action_noise,
     popart, gamma, clip_norm, nb_train_steps, nb_rollout_steps, nb_eval_steps, batch_size, memory,
@@ -20,6 +24,7 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
     rank = MPI.COMM_WORLD.Get_rank()
 
     #assert (np.abs(env.action_space.low) == env.action_space.high).all()  # we assume symmetric actions.
+    min_action = env.action_space.low
     max_action = env.action_space.high
     logger.info('scaling actions by {} before executing in env'.format(max_action))
     agent = DDPG(actor, critic, memory, env.observation_space.shape, env.action_space.shape,
@@ -78,7 +83,7 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
                     if rank == 0 and render:
                         env.render()
                     assert max_action.shape == action.shape
-                    new_obs, r, done, info = env.step(max_action * action)  # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
+                    new_obs, r, done, info = env.step(scale_action(action, min_action, max_action))  # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
                     t += 1
                     if rank == 0 and render:
                         env.render()
@@ -126,7 +131,7 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
                     eval_episode_reward = 0.
                     for t_rollout in range(nb_eval_steps):
                         eval_action, eval_q = agent.pi(eval_obs, apply_noise=False, compute_Q=True)
-                        eval_obs, eval_r, eval_done, eval_info = eval_env.step(max_action * eval_action)  # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
+                        eval_obs, eval_r, eval_done, eval_info = eval_env.step(scale_action(action, min_action, max_action))  # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
                         if render_eval:
                             eval_env.render()
                         eval_episode_reward += eval_r
@@ -238,6 +243,7 @@ def test(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, par
     rank = MPI.COMM_WORLD.Get_rank()
 
     # assert (np.abs(env.action_space.low) == env.action_space.high).all()  # we assume symmetric actions.
+    min_action = env.action_space.low
     max_action = env.action_space.high
     logger.info('scaling actions by {} before executing in env'.format(max_action))
     agent = DDPG(actor, critic, memory, env.observation_space.shape, env.action_space.shape,
@@ -258,6 +264,7 @@ def test(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, par
         agent.initialize(sess)
         saver = tf.train.Saver()
         saver.restore(sess, tf.train.latest_checkpoint("/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/openai-2018-05-21-12-30-19-100857"))
+        # saver.restore(sess, tf.train.latest_checkpoint("/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/openai-2018-05-20-13-26-41-439177"))
 
         for _ in range(10):
             obs = env.reset()
@@ -265,7 +272,7 @@ def test(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, par
             episode_r = 0
             while not done:
                 action, q = agent.pi(obs, apply_noise=False, compute_Q=True)
-                obs, r, done, info = env.step(max_action * action)
+                obs, r, done, info = env.step(scale_action(action, min_action, max_action))
                 episode_r += r
                 env.render()
             print('Episode Reward ', episode_r)
