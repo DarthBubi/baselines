@@ -20,10 +20,9 @@ def scale_action(action, min_action, max_action):
 def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, param_noise, actor, critic,
     normalize_returns, normalize_observations, critic_l2_reg, actor_lr, critic_lr, action_noise,
     popart, gamma, clip_norm, nb_train_steps, nb_rollout_steps, nb_eval_steps, batch_size, memory,
-    tau=0.01, eval_env=None, param_noise_adaption_interval=50):
+    tau=0.01, eval_env=None, param_noise_adaption_interval=50, logdir=None, load_policy=False):
     rank = MPI.COMM_WORLD.Get_rank()
 
-    #assert (np.abs(env.action_space.low) == env.action_space.high).all()  # we assume symmetric actions.
     min_action = env.action_space.low
     max_action = env.action_space.high
     logger.info('scaling actions by {} before executing in env'.format(max_action))
@@ -48,6 +47,12 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
     with U.single_threaded_session() as sess:
         # Prepare everything.
         agent.initialize(sess)
+
+        if load_policy:
+            U.load_state(os.path.join(logdir, "model-50"))
+            agent.memory.load(os.path.join(logdir, "memory_pickle.pkl"))
+            logger.info("Loaded " + str(agent.memory.nb_entries) + " from saved memory.")
+
         sess.graph.finalize()
 
         agent.reset()
@@ -117,7 +122,7 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
                             pass
                         if info['target_hit']:
                             pass
-                        
+
                         agent.reset()
                         obs = env.reset()
 
@@ -253,10 +258,9 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
 def test(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, param_noise, actor, critic,
          normalize_returns, normalize_observations, critic_l2_reg, actor_lr, critic_lr, action_noise,
          popart, gamma, clip_norm, nb_train_steps, nb_rollout_steps, nb_eval_steps, batch_size, memory,
-         tau=0.01, eval_env=None, param_noise_adaption_interval=50):
+         tau=0.01, eval_env=None, param_noise_adaption_interval=50, logdir=None, load_policy=False):
     rank = MPI.COMM_WORLD.Get_rank()
 
-    # assert (np.abs(env.action_space.low) == env.action_space.high).all()  # we assume symmetric actions.
     min_action = env.action_space.low
     max_action = env.action_space.high
     logger.info('scaling actions by {} before executing in env'.format(max_action))
@@ -269,16 +273,20 @@ def test(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, par
     logger.info('Using agent with the following configuration:')
     logger.info(str(agent.__dict__.items()))
 
-    # Set up logging stuff only for a single worker.
-
-    env.render()
+    if render:
+        env.render()
 
     with U.single_threaded_session() as sess:
         # Prepare everything.
         agent.initialize(sess)
         saver = tf.train.Saver()
-        saver.restore(sess, tf.train.latest_checkpoint("/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/openai-2018-05-21-12-30-19-100857"))
-        # saver.restore(sess, tf.train.latest_checkpoint("/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/openai-2018-05-20-13-26-41-439177"))
+        if logdir:
+            saver.restore(sess, tf.train.latest_checkpoint(logdir))
+        else:
+            # saver.restore(sess, tf.train.latest_checkpoint("/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/openai-2018-05-21-12-30-19-100857"))
+            # saver.restore(sess, tf.train.latest_checkpoint("/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/openai-2018-05-20-13-26-41-439177"))
+            # saver.restore(sess, tf.train.latest_checkpoint("/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/openai-2018-05-22-12-28-40-462267"))
+            saver.restore(sess, tf.train.latest_checkpoint("/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/openai-2018-05-23-18-13-46-195987"))
 
         for _ in range(10):
             obs = env.reset()
@@ -288,5 +296,4 @@ def test(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, par
                 action, q = agent.pi(obs, apply_noise=False, compute_Q=True)
                 obs, r, done, info = env.step(scale_action(action, min_action, max_action))
                 episode_r += r
-                env.render()
             print('Episode Reward ', episode_r)

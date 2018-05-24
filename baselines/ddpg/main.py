@@ -116,10 +116,10 @@ def parse_args():
     parser.add_argument('--nb-rollout-steps', type=int, default=100)  # per epoch cycle and MPI worker
     parser.add_argument('--noise-type', type=str, default='adaptive-param_0.2')  # choices are adaptive-param_xx, ou_xx, normal_xx, none
     parser.add_argument('--num-timesteps', type=int, default=None)
-    # parser.add_argument('--logdir', type=str, default=None)
+    parser.add_argument('--logdir', type=str, default=None)
     boolean_flag(parser, 'evaluation', default=False)
     boolean_flag(parser, 'test', default=False)
-    # parser.add_argument('--logdir', type=str, default=None)
+    boolean_flag(parser, 'load-policy', default=False)
     args = parser.parse_args()
     # we don't directly specify timesteps for this script, so make sure that if we do specify them
     # they agree with the other parameters
@@ -133,7 +133,10 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     if MPI.COMM_WORLD.Get_rank() == 0:
-        log_dir = "/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/"
+        if args['logdir'] is None or args['load_policy']:
+            log_dir = "/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/"
+        else:
+            log_dir = args['logdir']
         sess_dir = os.path.join(log_dir, datetime.datetime.now().strftime("openai-%Y-%m-%d-%H-%M-%S-%f"))
         logger.configure(dir=sess_dir)
     # Run actual script.
