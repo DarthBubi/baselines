@@ -28,7 +28,8 @@ def run(env_id, seed, noise_type, layer_norm, evaluation, test, **kwargs):
     env = gym.make(env_id)
     if hasattr(env, "goal"):
         env = gym.wrappers.FlattenDictWrapper(env, dict_keys=['observation', 'desired_goal'])
-    env = bench.Monitor(env, logger.get_dir() and os.path.join(logger.get_dir(), str(rank)))
+    env = bench.Monitor(env, logger.get_dir() and os.path.join(logger.get_dir(), str(rank)),
+                        info_keywords=("ball_hit", "target_hit", "end_pos"))
 
     if evaluation and rank == 0:
         # eval_env = gym.make(env_id)
@@ -58,7 +59,7 @@ def run(env_id, seed, noise_type, layer_norm, evaluation, test, **kwargs):
             raise RuntimeError('unknown noise type "{}"'.format(current_noise_type))
 
     # Configure components.
-    memory = Memory(limit=int(1e6), action_shape=env.action_space.shape, observation_shape=env.observation_space.shape)
+    memory = Memory(limit=int(1e5), action_shape=env.action_space.shape, observation_shape=env.observation_space.shape)
     critic = Critic(layer_norm=layer_norm)
     actor = Actor(nb_actions, layer_norm=layer_norm)
 

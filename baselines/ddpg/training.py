@@ -36,7 +36,7 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
 
     # Set up logging stuff only for a single worker.
     if rank == 0:
-        saver = tf.train.Saver()
+        saver = tf.train.Saver(max_to_keep=None)
     else:
         saver = None
 
@@ -49,7 +49,8 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
         agent.initialize(sess)
 
         if load_policy:
-            U.load_state(os.path.join(logdir, "model-50"))
+            U.load_state(logdir, latest=True)
+            # U.load_state(os.path.join(logdir, "model-17"))
             agent.memory.load(os.path.join(logdir, "memory_pickle.pkl"))
             logger.info("Loaded " + str(agent.memory.nb_entries) + " from saved memory.")
 
@@ -77,10 +78,12 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
         epoch_qs = []
         epoch_episodes = 0
 
-        epoch_episode_ball_hits = []
-        epoch_episode_target_hits = []
+        total_ball_hits = []
+        total_target_hits = []
 
         for epoch in range(nb_epochs):
+            epoch_episode_ball_hits = []
+            epoch_episode_target_hits = []
             for cycle in range(nb_epoch_cycles):
                 # Perform rollouts.
                 for t_rollout in range(nb_rollout_steps):
@@ -117,6 +120,8 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
 
                         epoch_episode_ball_hits.append(int(info['ball_hit']))
                         epoch_episode_target_hits.append(int(info['target_hit']))
+                        total_ball_hits.append(int(info['ball_hit']))
+                        total_target_hits.append(int(info['target_hit']))
 
                         if info['ball_hit']:
                             pass
@@ -230,6 +235,8 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
             combined_stats['total/episodes'] = mpi_mean(episodes)
             combined_stats['total/epochs'] = epoch + 1
             combined_stats['total/steps'] = t
+            combined_stats['total/ball_hits'] = mpi_mean(total_ball_hits)
+            combined_stats['total/target_hits'] = mpi_mean(total_target_hits)
 
             # Evaluation statistics.
             if eval_env is not None:
