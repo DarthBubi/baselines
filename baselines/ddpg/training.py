@@ -1,9 +1,12 @@
 import os
 import time
+import csv
+import logging
 from collections import deque
 import pickle
 
 from baselines.ddpg.ddpg import DDPG
+from baselines.ddpg.rdpg import RDPG
 import baselines.common.tf_util as U
 from baselines.ddpg.util import mpi_mean, mpi_std, mpi_sum
 
@@ -18,19 +21,32 @@ def scale_action(action, min_action, max_action):
 
 
 def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, param_noise, actor, critic,
-    normalize_returns, normalize_observations, critic_l2_reg, actor_lr, critic_lr, action_noise,
-    popart, gamma, clip_norm, nb_train_steps, nb_rollout_steps, nb_eval_steps, batch_size, memory,
-    tau=0.01, eval_env=None, param_noise_adaption_interval=50, logdir=None, load_policy=False):
+          normalize_returns, normalize_observations, critic_l2_reg, actor_lr, critic_lr, action_noise,
+          popart, gamma, clip_norm, nb_train_steps, nb_rollout_steps, nb_eval_steps, batch_size, memory,
+          tau=0.01, eval_env=None, param_noise_adaption_interval=50, logdir=None, load_policy=False, recurrent=False):
     rank = MPI.COMM_WORLD.Get_rank()
 
     min_action = env.action_space.low
     max_action = env.action_space.high
-    logger.info('scaling actions by {} before executing in env'.format(max_action))
-    agent = DDPG(actor, critic, memory, env.observation_space.shape, env.action_space.shape,
-        gamma=gamma, tau=tau, normalize_returns=normalize_returns, normalize_observations=normalize_observations,
-        batch_size=batch_size, action_noise=action_noise, param_noise=param_noise, critic_l2_reg=critic_l2_reg,
-        actor_lr=actor_lr, critic_lr=critic_lr, enable_popart=popart, clip_norm=clip_norm,
-        reward_scale=reward_scale)
+    logger.info('scaling actions by {} and {} before executing in env'.format(min_action, max_action))
+    logger.info('using recurret agent: {}'.format(recurrent))
+
+    if recurrent:
+        agent = RDPG(actor, critic, memory, env.observation_space.shape, env.action_space.shape,
+                     gamma=gamma, tau=tau, normalize_returns=normalize_returns,
+                     normalize_observations=normalize_observations,
+                     batch_size=batch_size, action_noise=action_noise, param_noise=param_noise,
+                     critic_l2_reg=critic_l2_reg,
+                     actor_lr=actor_lr, critic_lr=critic_lr, enable_popart=popart, clip_norm=clip_norm,
+                     reward_scale=reward_scale)
+    else:
+        agent = DDPG(actor, critic, memory, env.observation_space.shape, env.action_space.shape,
+                     gamma=gamma, tau=tau, normalize_returns=normalize_returns,
+                     normalize_observations=normalize_observations,
+                     batch_size=batch_size, action_noise=action_noise, param_noise=param_noise,
+                     critic_l2_reg=critic_l2_reg,
+                     actor_lr=actor_lr, critic_lr=critic_lr, enable_popart=popart, clip_norm=clip_norm,
+                     reward_scale=reward_scale)
     logger.info('Using agent with the following configuration:')
     logger.info(str(agent.__dict__.items()))
 
@@ -81,6 +97,9 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
         total_ball_hits = []
         total_target_hits = []
 
+        if recurrent:
+            actor_lstm_state = critic_lstm_state = np.zeros((2, 1, 64), dtype=np.float32)
+
         for epoch in range(nb_epochs):
             epoch_episode_ball_hits = []
             epoch_episode_target_hits = []
@@ -88,14 +107,20 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
                 # Perform rollouts.
                 for t_rollout in range(nb_rollout_steps):
                     # Predict next action.
-                    action, q = agent.pi(obs, apply_noise=True, compute_Q=True)
+                    if recurrent:
+                        action, q, \
+                        actor_lstm_state, _ = agent.pi(obs, actor_lstm_state, critic_lstm_state,
+                                                       apply_noise=True, compute_Q=False)
+                    else:
+                        action, q = agent.pi(obs, apply_noise=True, compute_Q=True)
                     assert action.shape == env.action_space.shape
 
                     # Execute next action.
                     if rank == 0 and render:
                         env.render()
                     assert max_action.shape == action.shape
-                    new_obs, r, done, info = env.step(scale_action(action, min_action, max_action))  # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
+                    new_obs, r, done, info = env.step(scale_action(action, min_action,
+                                                                   max_action))  # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
                     t += 1
                     if rank == 0 and render:
                         env.render()
@@ -105,7 +130,10 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
                     # Book-keeping.
                     epoch_actions.append(action)
                     epoch_qs.append(q)
-                    agent.store_transition(obs, action, r, new_obs, done)
+                    if recurrent:
+                        agent.store_transition(cycle, obs, action, r, new_obs, done)
+                    else:
+                        agent.store_transition(obs, action, r, new_obs, done)
                     obs = new_obs
 
                     if done:
@@ -153,7 +181,8 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
                     eval_episode_reward = 0.
                     for t_rollout in range(nb_eval_steps):
                         eval_action, eval_q = agent.pi(eval_obs, apply_noise=False, compute_Q=True)
-                        eval_obs, eval_r, eval_done, eval_info = eval_env.step(scale_action(action, min_action, max_action))  # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
+                        eval_obs, eval_r, eval_done, eval_info = eval_env.step(scale_action(action, min_action,
+                                                                                            max_action))  # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
                         if render_eval:
                             eval_env.render()
                         eval_episode_reward += eval_r
@@ -265,8 +294,7 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
 def test(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, param_noise, actor, critic,
          normalize_returns, normalize_observations, critic_l2_reg, actor_lr, critic_lr, action_noise,
          popart, gamma, clip_norm, nb_train_steps, nb_rollout_steps, nb_eval_steps, batch_size, memory,
-         tau=0.01, eval_env=None, param_noise_adaption_interval=50, logdir=None, load_policy=False):
-    rank = MPI.COMM_WORLD.Get_rank()
+         tau=0.01, eval_env=None, param_noise_adaption_interval=50, logdir=None, load_policy=False, recurrent=False):
 
     min_action = env.action_space.low
     max_action = env.action_space.high

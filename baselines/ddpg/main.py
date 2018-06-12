@@ -9,14 +9,15 @@ from baselines.common.misc_util import (
     boolean_flag,
 )
 import baselines.ddpg.training as training
-from baselines.ddpg.models import Actor, Critic
-from baselines.ddpg.memory import Memory
+from baselines.ddpg.models import Actor, Critic, RecurrentActor, RecurrentCritic
+from baselines.ddpg.memory import Memory, MemoryEpisodic
 from baselines.ddpg.noise import *
 import learnbb
 
 import gym
 import tensorflow as tf
 from mpi4py import MPI
+
 
 def run(env_id, seed, noise_type, layer_norm, evaluation, test, **kwargs):
     # Configure things.
@@ -59,9 +60,16 @@ def run(env_id, seed, noise_type, layer_norm, evaluation, test, **kwargs):
             raise RuntimeError('unknown noise type "{}"'.format(current_noise_type))
 
     # Configure components.
-    memory = Memory(limit=int(1e5), action_shape=env.action_space.shape, observation_shape=env.observation_space.shape)
-    critic = Critic(layer_norm=layer_norm)
-    actor = Actor(nb_actions, layer_norm=layer_norm)
+    if kwargs['recurrent']:
+        memory = MemoryEpisodic(limit=int(1e5), horizonlen=kwargs['nb_rollout_steps'],
+                                action_shape=env.action_space.shape, observation_shape=env.observation_space.shape)
+        critic = RecurrentCritic(layer_norm=layer_norm)
+        actor = RecurrentActor(nb_actions, layer_norm=layer_norm)
+    else:
+        memory = Memory(limit=int(1e5), action_shape=env.action_space.shape,
+                        observation_shape=env.observation_space.shape)
+        critic = Critic(layer_norm=layer_norm)
+        actor = Actor(nb_actions, layer_norm=layer_norm)
 
     # Seed everything to make things reproducible.
     seed = seed + 1000000 * rank
@@ -108,6 +116,7 @@ def parse_args():
     parser.add_argument('--critic-lr', type=float, default=1e-3)
     boolean_flag(parser, 'popart', default=False)
     parser.add_argument('--gamma', type=float, default=0.99)
+    parser.add_argument('--tau', type=float, default=0.01)
     parser.add_argument('--reward-scale', type=float, default=1.)
     parser.add_argument('--clip-norm', type=float, default=None)
     parser.add_argument('--nb-epochs', type=int, default=250)  # with default settings, perform 1M steps total
@@ -121,6 +130,7 @@ def parse_args():
     boolean_flag(parser, 'evaluation', default=False)
     boolean_flag(parser, 'test', default=False)
     boolean_flag(parser, 'load-policy', default=False)
+    boolean_flag(parser, 'recurrent', default=False)
     args = parser.parse_args()
     # we don't directly specify timesteps for this script, so make sure that if we do specify them
     # they agree with the other parameters
