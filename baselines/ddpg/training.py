@@ -158,21 +158,24 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
 
                         agent.reset()
                         obs = env.reset()
+                        if recurrent:
+                            actor_lstm_state = critic_lstm_state = np.zeros((2, 1, 64), dtype=np.float32)
 
                 # Train.
                 epoch_actor_losses = []
                 epoch_critic_losses = []
                 epoch_adaptive_distances = []
-                for t_train in range(nb_train_steps):
-                    # Adapt param noise, if necessary.
-                    if memory.nb_entries >= batch_size and t_train % param_noise_adaption_interval == 0:
-                        distance = agent.adapt_param_noise()
-                        epoch_adaptive_distances.append(distance)
+                if episodes > batch_size:
+                    for t_train in range(nb_train_steps):
+                        # Adapt param noise, if necessary.
+                        if memory.nb_entries >= batch_size and t_train % param_noise_adaption_interval == 0:
+                            distance = agent.adapt_param_noise()
+                            epoch_adaptive_distances.append(distance)
 
-                    cl, al = agent.train()
-                    epoch_critic_losses.append(cl)
-                    epoch_actor_losses.append(al)
-                    agent.update_target_net()
+                        cl, al = agent.train()
+                        epoch_critic_losses.append(cl)
+                        epoch_actor_losses.append(al)
+                        agent.update_target_net()
 
                 # Evaluate.
                 eval_episode_rewards = []
@@ -294,7 +297,8 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
 def test(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, param_noise, actor, critic,
          normalize_returns, normalize_observations, critic_l2_reg, actor_lr, critic_lr, action_noise,
          popart, gamma, clip_norm, nb_train_steps, nb_rollout_steps, nb_eval_steps, batch_size, memory,
-         tau=0.01, eval_env=None, param_noise_adaption_interval=50, logdir=None, load_policy=False, recurrent=False):
+         tau=0.01, eval_env=None, param_noise_adaption_interval=50, logdir=None, load_policy=False, recurrent=False,
+         load_model=None):
 
     min_action = env.action_space.low
     max_action = env.action_space.high
@@ -316,19 +320,69 @@ def test(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, par
         agent.initialize(sess)
         saver = tf.train.Saver()
         if logdir:
-            saver.restore(sess, tf.train.latest_checkpoint(logdir))
+            if load_model:
+                saver.restore(sess, os.path.join(logdir, load_model))
+            else:
+                saver.restore(sess, tf.train.latest_checkpoint(logdir))
         else:
-            # saver.restore(sess, tf.train.latest_checkpoint("/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/openai-2018-05-21-12-30-19-100857"))
-            # saver.restore(sess, tf.train.latest_checkpoint("/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/openai-2018-05-20-13-26-41-439177"))
-            # saver.restore(sess, tf.train.latest_checkpoint("/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/openai-2018-05-22-12-28-40-462267"))
-            saver.restore(sess, tf.train.latest_checkpoint("/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/openai-2018-05-23-18-13-46-195987"))
+            raise RuntimeError("You must provide a log directory to load a policy")
 
-        for _ in range(10):
+        for ep in range(nb_eval_steps):
             obs = env.reset()
             done = False
             episode_r = 0
+            info = None
+            t_back = 0
+            head_pos = []
+            ball_pos = []
+            ball_pos_hit = []
+            ball_vel = []
+            ball_sphere_intersect = []
             while not done:
-                action, q = agent.pi(obs, apply_noise=False, compute_Q=True)
-                obs, r, done, info = env.step(scale_action(action, min_action, max_action))
+                if info:
+                    if info['ball_hit'] and t_back >= 3:
+                        action = np.array([0, 0, 0])
+                    elif info['ball_hit'] and t_back < 3:
+                        pass
+                        # t_back +=1
+                    else:
+                        action, q = agent.pi(obs, apply_noise=False, compute_Q=True)
+                else:
+                    action, q = agent.pi(obs, apply_noise=False, compute_Q=True)
+
+                action = scale_action(action, min_action, max_action)
+                logger.debug(action)
+                obs, r, done, info = env.step(action)
+
+                if info['ball_hit'] and done:
+                    head_pos.append(info['strike_pos'])
+                    ball_pos.append(info['ball_pos_at_strike'])
+                    ball_pos_hit.append(info['ball_pos'])
+                    ball_sphere_intersect.append(info["ball_sphere_intersect"])
+
+                    arr = np.asarray(head_pos)
+                    np.save(os.path.join(logger.get_dir(), "head_pos_ep_{}.npy".format(ep)), arr)
+
+                    arr = np.asarray(ball_pos)
+                    np.save(os.path.join(logger.get_dir(), "ball_pos_ep_{}.npy".format(ep)), arr)
+
+                    arr = np.asarray(ball_pos_hit)
+                    np.save(os.path.join(logger.get_dir(), "ball_pos_hit_ep_{}.npy".format(ep)), arr)
+
+                    arr = np.asarray(ball_vel)
+                    np.save(os.path.join(logger.get_dir(), "ball_vel_ep_{}.npy".format(ep)), arr)
+
+                    arr = np.asarray(ball_sphere_intersect)
+                    np.save(os.path.join(logger.get_dir(), "ball_sphere_intersect_ep_{}.npy".format(ep)), arr)
+                else:
+                    if not info['ball_hit']:
+                        head_pos.append(info['head_pos'])
+                        ball_pos.append(info['ball_pos'])
+                    else:
+                        ball_pos_hit.append(info['ball_pos'])
+
+                    ball_vel.append(info['ball_vel'])
+                    ball_sphere_intersect.append(info["ball_sphere_intersect"])
+
                 episode_r += r
-            print('Episode Reward ', episode_r)
+            logger.info('Episode Reward ', episode_r)

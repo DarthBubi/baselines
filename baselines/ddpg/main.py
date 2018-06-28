@@ -29,8 +29,14 @@ def run(env_id, seed, noise_type, layer_norm, evaluation, test, **kwargs):
     env = gym.make(env_id)
     if hasattr(env, "goal"):
         env = gym.wrappers.FlattenDictWrapper(env, dict_keys=['observation', 'desired_goal'])
-    env = bench.Monitor(env, logger.get_dir() and os.path.join(logger.get_dir(), str(rank)),
-                        info_keywords=("ball_hit", "target_hit", "end_pos"))
+
+    if test:
+        env = bench.Monitor(env, logger.get_dir() and os.path.join(logger.get_dir(), str(rank)),
+                            info_keywords=("ball_hit", "target_hit", "end_pos", "head_pos", "ball_pos_at_strike",))
+                                          # "joint_pos_at_strike", "joint_vel_at_strike"))
+    else:
+        env = bench.Monitor(env, logger.get_dir() and os.path.join(logger.get_dir(), str(rank)),
+                            info_keywords=("ball_hit", "target_hit", "end_pos"))
 
     if evaluation and rank == 0:
         # eval_env = gym.make(env_id)
@@ -127,6 +133,8 @@ def parse_args():
     parser.add_argument('--noise-type', type=str, default='adaptive-param_0.2')  # choices are adaptive-param_xx, ou_xx, normal_xx, none
     parser.add_argument('--num-timesteps', type=int, default=None)
     parser.add_argument('--logdir', type=str, default=None)
+    parser.add_argument('--experiment-name', type=str, default=None)
+    parser.add_argument('--load-model', type=str, default=None)
     boolean_flag(parser, 'evaluation', default=False)
     boolean_flag(parser, 'test', default=False)
     boolean_flag(parser, 'load-policy', default=False)
@@ -148,7 +156,12 @@ if __name__ == '__main__':
             log_dir = "/home/johannes/Documents/Doggy/doggyPC/HeRoStack/logs/"
         else:
             log_dir = args['logdir']
-        sess_dir = os.path.join(log_dir, datetime.datetime.now().strftime("openai-%Y-%m-%d-%H-%M-%S-%f"))
+        if args['experiment_name']:
+            sess_dir = os.path.join(log_dir,  args['experiment_name'])
+        else:
+            sess_dir = os.path.join(log_dir, datetime.datetime.now().strftime("openai-%Y-%m-%d-%H-%M-%S-%f"))
         logger.configure(dir=sess_dir)
+
+    del args['experiment_name']
     # Run actual script.
     run(**args)
